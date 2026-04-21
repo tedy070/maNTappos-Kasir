@@ -7,62 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<!-- Firebase v10 SDK -->
-<script type="module">
-// ══════════════════════════════════════════════
-//  FIREBASE CONFIG — Ganti nilai di bawah ini
-//  dengan konfigurasi project Firebase Anda!
-//  Dapatkan dari: Firebase Console → Project Settings → Your Apps
-// ══════════════════════════════════════════════
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs, addDoc, writeBatch, onSnapshot, serverTimestamp
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import {
-  getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, updatePassword
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyBYLN82LrApmPpCNH7Hm1NFmKvssWQS6MY",
-  authDomain: "mantappos-kasir.firebaseapp.com",
-  databaseURL: "https://mantappos-kasir-default-rtdb.firebaseio.com",
-  projectId: "mantappos-kasir",
-  storageBucket: "mantappos-kasir.firebasestorage.app",
-  messagingSenderId: "566151835010",
-  appId: "1:566151835010:web:a67cb195a2e4d38353b39b",
-  measurementId: "G-8QPBXQB02M"
-};
-
-// ── Inisialisasi Firebase ──
-const firebaseApp = initializeApp(FIREBASE_CONFIG);
-const fsdb        = getFirestore(firebaseApp);
-const auth        = getAuth(firebaseApp);
-
-// ── Expose ke global scope agar fungsi non-module bisa akses ──
-window._firebase = {
-  fsdb, auth,
-  doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs, addDoc, writeBatch, onSnapshot, serverTimestamp,
-  signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword,
-  updatePassword, onAuthStateChanged
-};
-
-// ── Monitor Auth State ──
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    window._firebaseUser = user;
-    // Jika sudah login Firebase, muat data dari Firestore
-    if (typeof window._onFirebaseReady === 'function') {
-      window._onFirebaseReady(user);
-    }
-  } else {
-    window._firebaseUser = null;
-  }
-});
-</script>
 <style>
 :root {
   --bg:       #0d0f0e;
@@ -857,7 +801,6 @@ body {
 
       <div class="section-title" style="margin-bottom:14px">Manajemen Data</div>
       <div class="card-box" style="display:flex;flex-direction:column;gap:8px">
-        <button class="tb-btn" style="width:100%;height:38px;font-size:13px;color:var(--green);border-color:var(--greenDim);background:var(--greenDim)" onclick="refreshDariCloud()">☁ Refresh Data dari Cloud</button>
         <button class="tb-btn" style="width:100%;height:38px;font-size:13px;color:var(--blue);border-color:#1e3a5f;background:#1e3a5f33" onclick="openModal('modal-sinkron')">⇄ Sinkron Antar Device</button>
         <button class="tb-btn" style="width:100%;height:38px;font-size:13px;color:var(--green);border-color:var(--greenDim)" onclick="exportXLSX()">Ekspor Database XLSX</button>
         <button class="tb-btn" style="width:100%;height:38px;font-size:13px" onclick="backupJSON()">Backup Data (JSON)</button>
@@ -1322,10 +1265,21 @@ body {
 
 <script>
 // ══════════════════════════════════════════════
-//  DATA STORE — Firebase Firestore (primary)
-//              localStorage (offline fallback)
+//  FIREBASE CONFIG
 // ══════════════════════════════════════════════
-const DB_KEY = 'mantappos_v1';
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAmiPmFWgHnvLqNVNaykgrk1gkmaVyd1Go",
+  authDomain: "portofolio-tedi.firebaseapp.com",
+  databaseURL: "https://portofolio-tedi-default-rtdb.firebaseio.com",
+  projectId: "portofolio-tedi",
+  storageBucket: "portofolio-tedi.firebasestorage.app",
+  messagingSenderId: "435243696299",
+  appId: "1:435243696299:web:62632334479656070437ee"
+};
+
+// ══════════════════════════════════════════════
+//  DATA STORE — Firebase Realtime Database
+// ══════════════════════════════════════════════
 const DEFAULT_DB = {
   prods: [
     {id:'P001',nama:'Pupuk Urea 50kg',kat:'Pupuk',sat:'sak',stok:120,min:20,hb:285000,hj:320000,barcode:''},
@@ -1353,144 +1307,27 @@ const DEFAULT_DB = {
   counters: { prod:13, pel:4, trx:1, bm:1, hutang:1 }
 };
 
-// db dimuat dari Firestore atau fallback ke localStorage
-let db = (() => { try { const r=localStorage.getItem(DB_KEY); return r?JSON.parse(r):JSON.parse(JSON.stringify(DEFAULT_DB)); } catch(e) { return JSON.parse(JSON.stringify(DEFAULT_DB)); } })();
+// db lokal — disinkron dari Firebase saat load
+let db = JSON.parse(JSON.stringify(DEFAULT_DB));
 
-// ── FIREBASE HELPERS ──
-function _fs()   { return window._firebase?.fsdb; }
-function _uid()  { return window._firebaseUser?.uid || null; }
-function _storeId() { return _uid() ? `stores/${_uid()}` : null; }
-
-// Koleksi utama di Firestore:
-// stores/{uid}/prods/{prodId}
-// stores/{uid}/trx/{trxId}
-// stores/{uid}/pelanggan/{pelId}
-// stores/{uid}/hutang/{hutId}
-// stores/{uid}/meta/setting   (satu dokumen)
-// stores/{uid}/meta/counters  (satu dokumen)
-
-async function fbGet(subCol, docId) {
-  if(!_fs()||!_uid()) return null;
-  try {
-    const { doc, getDoc } = window._firebase;
-    const ref = docId
-      ? doc(_fs(), _storeId(), subCol, docId)
-      : doc(_fs(), _storeId(), 'meta', subCol);
-    const snap = await getDoc(ref);
-    return snap.exists() ? snap.data() : null;
-  } catch(e) { console.warn('fbGet error', e); return null; }
-}
-
-async function fbSet(subCol, docId, data) {
-  if(!_fs()||!_uid()) return;
-  try {
-    const { doc, setDoc, serverTimestamp } = window._firebase;
-    const ref = docId
-      ? doc(_fs(), _storeId(), subCol, docId)
-      : doc(_fs(), _storeId(), 'meta', subCol);
-    await setDoc(ref, { ...data, _updatedAt: serverTimestamp() }, { merge: true });
-  } catch(e) { console.warn('fbSet error', e); }
-}
-
-async function fbDelete(subCol, docId) {
-  if(!_fs()||!_uid()) return;
-  try {
-    const { doc, deleteDoc } = window._firebase;
-    await deleteDoc(doc(_fs(), _storeId(), subCol, docId));
-  } catch(e) { console.warn('fbDelete error', e); }
-}
-
-async function fbGetAll(subCol) {
-  if(!_fs()||!_uid()) return [];
-  try {
-    const { collection, getDocs } = window._firebase;
-    const snap = await getDocs(collection(_fs(), _storeId(), subCol));
-    return snap.docs.map(d => { const data = d.data(); delete data._updatedAt; return data; });
-  } catch(e) { console.warn('fbGetAll error', e); return []; }
-}
-
-// Muat seluruh db dari Firestore
-async function loadDBFromFirebase() {
-  try {
-    toast('Memuat data dari cloud...', 'info');
-    const [prods, trx, pelanggan, hutang, setting, counters] = await Promise.all([
-      fbGetAll('prods'),
-      fbGetAll('trx'),
-      fbGetAll('pelanggan'),
-      fbGetAll('hutang'),
-      fbGet('setting'),
-      fbGet('counters'),
-    ]);
-    if (prods.length > 0 || trx.length > 0 || pelanggan.length > 0) {
-      db.prods     = prods;
-      db.trx       = trx.sort((a,b) => (b.id||'').localeCompare(a.id||''));
-      db.pelanggan = pelanggan;
-      db.hutang    = hutang;
-      if (setting)  db.setting  = { ...db.setting, ...setting };
-      if (counters) db.counters = { ...db.counters, ...counters };
-      // Simpan ke localStorage sebagai cache offline
-      try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch(e) {}
-      toast('Data cloud berhasil dimuat ✓', 'success');
-    } else {
-      // Akun baru — upload DEFAULT_DB ke Firestore
-      await uploadDefaultDB();
-      toast('Akun baru: data awal diunggah ke cloud ✓', 'success');
-    }
-  } catch(e) {
-    console.error('loadDBFromFirebase error', e);
-    toast('Gagal muat dari cloud, pakai data lokal', 'error');
-  }
-}
-
-// Upload DEFAULT_DB ke Firestore (untuk akun baru)
-async function uploadDefaultDB() {
-  const { writeBatch, doc, collection } = window._firebase;
-  const batch = writeBatch(_fs());
-  const base = _storeId();
-  db.prods.forEach(p => {
-    batch.set(doc(_fs(), base, 'prods', p.id), p);
-  });
-  db.pelanggan.forEach(p => {
-    batch.set(doc(_fs(), base, 'pelanggan', p.id), p);
-  });
-  batch.set(doc(_fs(), base, 'meta', 'setting'),  db.setting);
-  batch.set(doc(_fs(), base, 'meta', 'counters'), db.counters);
-  await batch.commit();
-}
+// Referensi Firebase (diinisialisasi setelah SDK load)
+let fbApp, fbDB, fbRef;
 
 // ══════════════════════════════════════════════
-//  MULTI-ACCOUNT STORE — Firebase Auth + Firestore
-//  (localStorage hanya sebagai cache lokal)
+//  MULTI-ACCOUNT STORE — Firebase
 // ══════════════════════════════════════════════
-const ACCOUNTS_KEY = 'mantappos_accounts_v2';
+let accounts = []; // diisi dari Firebase saat initFirebase()
+let fbAccRef  = null; // referensi ke node accounts di Firebase
 
-function loadAccounts() {
-  try {
-    const r = localStorage.getItem(ACCOUNTS_KEY);
-    if (r) return JSON.parse(r);
-  } catch(e) {}
-  return [{
-    id: 'USR001',
-    nama: 'Admin',
-    email: 'admin@mantappos.com',
-    pw: '1234',
-    role: 'owner',
-    kode: 'MANTAP2024',
-    tgl: nowDate(),
-    lastLogin: null
-  }];
-}
 function saveAccounts(accs) {
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accs));
-  // Simpan profile akun ke Firestore jika sudah login
-  if(_fs() && _uid()) {
-    accs.forEach(a => {
-      const safeAcc = { id:a.id, nama:a.nama, email:a.email, role:a.role, tgl:a.tgl, lastLogin:a.lastLogin||null };
-      fbSet('accounts', a.id, safeAcc).catch(()=>{});
+  accounts = accs;
+  if (fbAccRef) {
+    fbAccRef.set(accs).catch(e => {
+      console.error('Gagal simpan akun ke Firebase:', e);
+      toast('Gagal simpan akun!','error');
     });
   }
 }
-let accounts = loadAccounts();
 
 let kasirNama = 'Admin';
 let kasirEmail = '';
@@ -1502,37 +1339,25 @@ let activeCat = '';
 let numpadOpen = false;
 let _lupaVerifiedEmail = '';
 
-// saveDB: simpan ke localStorage (cache) + antrian ke Firestore
-let _saveQueue = [];
-let _saveTimer  = null;
-
 function saveDB() {
-  // 1. Selalu simpan ke localStorage sebagai cache offline
   const dot = document.getElementById('sync-dot');
-  if(dot) dot.classList.add('saving');
-  try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch(e) { toast('Storage lokal penuh!','error'); }
-  if(dot) setTimeout(()=>dot.classList.remove('saving'), 800);
-}
-
-// saveDoc: simpan satu dokumen ke Firestore (non-blocking)
-function saveDoc(subCol, id, data) {
-  saveDB(); // local cache dulu
-  if(!_fs()||!_uid()) return; // offline → hanya lokal
-  fbSet(subCol, id, data).catch(e=>console.warn('saveDoc failed', e));
-}
-
-// saveMeta: simpan setting/counters
-function saveMeta(key, data) {
-  saveDB();
-  if(!_fs()||!_uid()) return;
-  fbSet(key, null, data).catch(e=>console.warn('saveMeta failed', e));
-}
-
-// deleteDoc: hapus dari Firestore
-function deleteFireDoc(subCol, id) {
-  saveDB();
-  if(!_fs()||!_uid()) return;
-  fbDelete(subCol, id).catch(e=>console.warn('deleteFireDoc failed', e));
+  dot.classList.add('saving');
+  if (fbRef) {
+    fbRef.set({
+      prods: db.prods, pelanggan: db.pelanggan, trx: db.trx,
+      barangMasuk: db.barangMasuk, hutang: db.hutang,
+      setting: db.setting, counters: db.counters
+    }).then(() => {
+      setTimeout(() => dot.classList.remove('saving'), 500);
+    }).catch(e => {
+      toast('Gagal simpan ke Firebase!','error');
+      console.error(e);
+      dot.classList.remove('saving');
+    });
+  } else {
+    try { localStorage.setItem('mantappos_v1', JSON.stringify(db)); } catch(e) {}
+    setTimeout(() => dot.classList.remove('saving'), 500);
+  }
 }
 
 function nextId(key, prefix) { return prefix + String(db.counters[key]++).padStart(3,'0'); }
@@ -1632,58 +1457,32 @@ function checkStrength(inputId, barId) {
   else segs[0].classList.add('weak');
 }
 
-// ── LOGIN — Firebase Auth ──
-async function doLogin() {
+// ── LOGIN ──
+function doLogin() {
   const email = (document.getElementById('login-email').value||'').trim().toLowerCase();
   const pw    = document.getElementById('login-pw').value;
   if(!email) { showAuthErr('login-err','Email wajib diisi.'); return; }
   if(!isValidEmail(email)) { showAuthErr('login-err','Format email tidak valid.'); return; }
   if(!pw) { showAuthErr('login-err','Password wajib diisi.'); return; }
 
-  // Coba Firebase Auth dulu
-  const fb = window._firebase;
-  if(fb && fb.signInWithEmailAndPassword) {
-    try {
-      const cred = await fb.signInWithEmailAndPassword(fb.auth, email, pw);
-      const user = cred.user;
-      kasirEmail = user.email;
-      // Cari nama dari akun lokal atau Firestore
-      const accLokal = accounts.find(a=>a.email.toLowerCase()===email);
-      kasirNama = accLokal ? accLokal.nama : (user.displayName || 'Kasir');
-      // Update lastLogin
-      if(accLokal) { accLokal.lastLogin = nowStr(); saveAccounts(accounts); }
-      await masukAplikasi();
-      return;
-    } catch(err) {
-      // Jika Firebase gagal (offline atau belum dikonfigurasi), fallback ke lokal
-      if(err.code && err.code !== 'auth/configuration-not-found' && err.code !== 'auth/network-request-failed') {
-        const msg = {
-          'auth/user-not-found': 'Email tidak terdaftar di Firebase.',
-          'auth/wrong-password': 'Password salah.',
-          'auth/invalid-email': 'Format email tidak valid.',
-          'auth/too-many-requests': 'Terlalu banyak percobaan. Coba lagi nanti.',
-          'auth/invalid-credential': 'Email atau password salah.',
-        }[err.code] || 'Login gagal: ' + err.message;
-        showAuthErr('login-err', msg);
-        return;
-      }
-      // Fallback ke akun lokal jika Firebase belum dikonfigurasi / offline
-      console.warn('Firebase Auth tidak tersedia, fallback ke login lokal:', err.code);
-    }
+  if(!accounts.length) {
+    showAuthErr('login-err','Data akun belum loaded. Coba refresh halaman.');
+    return;
   }
 
-  // Fallback: login lokal (saat offline atau Firebase belum dikonfigurasi)
   const acc = accounts.find(a=>a.email.toLowerCase()===email && a.pw===pw);
   if(!acc) { showAuthErr('login-err','Email atau password tidak cocok.'); return; }
+
+  // Update lastLogin ke Firebase
   acc.lastLogin = nowStr();
   saveAccounts(accounts);
   kasirNama  = acc.nama;
   kasirEmail = acc.email;
-  await masukAplikasi();
+  masukAplikasi();
 }
 
-async function masukAplikasi() {
-  // Simpan sesi ke sessionStorage
+function masukAplikasi() {
+  // Simpan sesi ke sessionStorage agar tidak keluar saat refresh
   sessionStorage.setItem('mantappos_session', JSON.stringify({
     email: kasirEmail,
     nama: kasirNama,
@@ -1691,24 +1490,13 @@ async function masukAplikasi() {
   }));
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app-kasir').style.display='grid';
-
-  // Muat data dari Firestore jika Firebase tersedia
-  if(_fs() && _uid()) {
-    await loadDBFromFirebase();
-  }
-
   init();
 }
 
-async function doLogout() {
+function doLogout() {
   if(!confirm('Keluar dari aplikasi?')) return;
   sessionStorage.removeItem('mantappos_session');
   sessionStorage.removeItem('mantappos_lastview');
-  // Sign out dari Firebase Auth
-  const fb = window._firebase;
-  if(fb && fb.signOut) {
-    try { await fb.signOut(fb.auth); } catch(e) { console.warn('Firebase signOut error', e); }
-  }
   kasirNama = 'Admin';
   kasirEmail = '';
   document.getElementById('app-kasir').style.display='none';
@@ -1739,7 +1527,10 @@ function resetPassword() {
   if(pwBaru.length<6) { showAuthErr('lupa-err','Password minimal 6 karakter.'); return; }
   if(pwBaru!==konfirm) { showAuthErr('lupa-err','Konfirmasi password tidak cocok.'); return; }
   const idx = accounts.findIndex(a=>a.email.toLowerCase()===_lupaVerifiedEmail.toLowerCase());
-  if(idx>=0) { accounts[idx].pw = pwBaru; saveAccounts(accounts); }
+  if(idx>=0) {
+    accounts[idx].pw = pwBaru;
+    saveAccounts(accounts); // simpan ke Firebase
+  }
   document.getElementById('lupa-step1').style.display='block';
   document.getElementById('lupa-step2').style.display='none';
   ['lupa-pw-baru','lupa-pw-konfirm'].forEach(x=>document.getElementById(x).value='');
@@ -1748,8 +1539,8 @@ function resetPassword() {
   toast('Password berhasil direset! Silakan masuk.','success');
 }
 
-// ── BUAT AKUN + Firebase Auth ──
-async function buatAkun() {
+// ── BUAT AKUN + EKSPOR DATABASE XLSX OTOMATIS ──
+function buatAkun() {
   const nama    = (document.getElementById('daftar-nama').value||'').trim();
   const email   = (document.getElementById('daftar-email').value||'').trim().toLowerCase();
   const role    = document.getElementById('daftar-role').value;
@@ -1764,26 +1555,10 @@ async function buatAkun() {
   if(pw!==konfirm)       { showAuthErr('daftar-err','Konfirmasi password tidak cocok.'); return; }
   if(!kode)              { showAuthErr('daftar-err','Kode pemulihan wajib diisi.'); return; }
   if(kode.length<6)      { showAuthErr('daftar-err','Kode pemulihan minimal 6 karakter.'); return; }
-  if(accounts.find(a=>a.email.toLowerCase()===email)) {
-    showAuthErr('daftar-err','Email sudah terdaftar.'); return;
-  }
 
-  // Coba daftarkan ke Firebase Auth
-  const fb = window._firebase;
-  if(fb && fb.createUserWithEmailAndPassword) {
-    try {
-      await fb.createUserWithEmailAndPassword(fb.auth, email, pw);
-      toast('Akun Firebase berhasil dibuat!', 'success');
-    } catch(err) {
-      const msg = {
-        'auth/email-already-in-use': 'Email sudah dipakai di Firebase.',
-        'auth/weak-password': 'Password terlalu lemah (min. 6 karakter).',
-        'auth/configuration-not-found': null, // Firebase belum dikonfigurasi — abaikan
-        'auth/network-request-failed': null,   // Offline — abaikan
-      }[err.code];
-      if(msg) { showAuthErr('daftar-err', msg); return; }
-      if(msg !== null) console.warn('Firebase createUser error (non-fatal):', err.code);
-    }
+  // Cek duplikat email dari data Firebase
+  if(accounts.find(a=>a.email.toLowerCase()===email)) {
+    showAuthErr('daftar-err','Email sudah terdaftar di Firebase.'); return;
   }
 
   const newAcc = {
@@ -1793,13 +1568,13 @@ async function buatAkun() {
     lastLogin: null
   };
   accounts.push(newAcc);
-  saveAccounts(accounts);
-  eksporDatabaseUser(newAcc);
+  saveAccounts(accounts); // simpan ke Firebase
 
+  eksporDatabaseUser(newAcc);
   ['daftar-nama','daftar-email','daftar-pw','daftar-konfirm','daftar-kode'].forEach(x=>document.getElementById(x).value='');
   checkStrength('daftar-pw','daftar-strength');
   showPanel('panel-pilih');
-  toast(`Akun "${nama}" dibuat! Database XLSX terunduh.`,'success');
+  toast(`Akun "${nama}" dibuat & disimpan ke Firebase!`,'success');
 }
 
 // ── EKSPOR XLSX — SHEET USERS SAJA ──
@@ -1826,64 +1601,117 @@ function eksporDatabaseUser(acc) {
 }
 
 // ── SESSION RESTORE + INIT ──
-document.addEventListener('DOMContentLoaded', async ()=>{
+document.addEventListener('DOMContentLoaded', ()=>{
   // Enter key handlers
   const lpw = document.getElementById('login-pw');
   if(lpw) lpw.addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   const le = document.getElementById('login-email');
   if(le) le.addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('login-pw').focus(); });
+  // Firebase SDK di-load setelah script ini — initFirebase() dipanggil dari script terpisah di bawah
+});
+
+// ── FIREBASE INIT & LOAD DATA ──
+function initFirebase() {
+  fbApp = firebase.initializeApp(FIREBASE_CONFIG);
+  fbDB  = firebase.database();
+  fbRef = fbDB.ref('mantappos');
+  fbAccRef = fbDB.ref('mantappos_accounts');
+
+  // Layar loading
+  const loadDiv = document.createElement('div');
+  loadDiv.id = 'fb-loading';
+  loadDiv.style = 'position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px';
+  loadDiv.innerHTML = `
+    <div style="width:48px;height:48px;background:var(--green);border-radius:14px;display:flex;align-items:center;justify-content:center">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0d0f0e" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    </div>
+    <div style="font-size:15px;font-weight:700;color:var(--text)">maNTap<span style="color:var(--green)">Pos</span></div>
+    <div style="font-size:12px;color:var(--text3)" id="fb-load-msg">Menghubungkan ke database...</div>`;
+  document.body.appendChild(loadDiv);
+
+  // Load data akun & aplikasi secara paralel
+  Promise.all([
+    fbRef.once('value'),
+    fbAccRef.once('value')
+  ]).then(([snapDB, snapAcc]) => {
+
+    // ── Load data aplikasi ──
+    const data = snapDB.val();
+    if (data) {
+      db.prods       = data.prods       || DEFAULT_DB.prods;
+      db.pelanggan   = data.pelanggan   || DEFAULT_DB.pelanggan;
+      db.trx         = data.trx         || [];
+      db.barangMasuk = data.barangMasuk || [];
+      db.hutang      = data.hutang      || [];
+      db.setting     = data.setting     || DEFAULT_DB.setting;
+      db.counters    = data.counters    || DEFAULT_DB.counters;
+    } else {
+      saveDB(); // upload default jika belum ada
+    }
+
+    // ── Load akun dari Firebase ──
+    const accData = snapAcc.val();
+    if (accData && Array.isArray(accData) && accData.length > 0) {
+      accounts = accData;
+    } else {
+      // Buat akun admin default pertama kali
+      accounts = [{
+        id: 'USR001',
+        nama: 'Admin',
+        email: 'admin@mantappos.com',
+        pw: '1234',
+        role: 'owner',
+        kode: 'MANTAP2024',
+        tgl: nowDate(),
+        lastLogin: null
+      }];
+      fbAccRef.set(accounts); // simpan ke Firebase
+    }
+
+    document.getElementById('fb-loading').remove();
+    onFirebaseReady();
+
+  }).catch(e => {
+    console.error('Firebase load error:', e);
+    document.getElementById('fb-load-msg').textContent = 'Gagal konek — cek koneksi internet';
+    setTimeout(() => {
+      document.getElementById('fb-loading').remove();
+      toast('Mode offline — data mungkin tidak terkini','error');
+      onFirebaseReady();
+    }, 2000);
+  });
+}
+
+function onFirebaseReady() {
   renderAkunList();
-
-  // ── Callback ketika Firebase Auth siap & user sudah login ──
-  window._onFirebaseReady = async (firebaseUser) => {
-    const raw = sessionStorage.getItem('mantappos_session');
-    if(!raw) return; // Belum ada sesi app
-    try {
-      const sess = JSON.parse(raw);
-      if(sess && sess.email && (Date.now() - sess.ts) < 86400000) {
-        if(sess.email.toLowerCase() !== firebaseUser.email.toLowerCase()) return;
-        kasirNama  = sess.nama || firebaseUser.displayName || 'Kasir';
-        kasirEmail = sess.email;
-        document.getElementById('login-screen').style.display='none';
-        document.getElementById('app-kasir').style.display='grid';
-        await loadDBFromFirebase();
-        init();
-        const lastView = sessionStorage.getItem('mantappos_lastview');
-        if(lastView && lastView !== 'kasir') {
-          const btn = document.querySelector(`.nav-btn[data-view="${lastView}"]`);
-          if(btn) showView(lastView, btn);
-        }
-      }
-    } catch(e) { sessionStorage.removeItem('mantappos_session'); }
-  };
-
-  // Cek sesi lokal (fallback jika Firebase belum/tidak dikonfigurasi)
   const raw = sessionStorage.getItem('mantappos_session');
-  if(raw) {
+  if (raw) {
     try {
       const sess = JSON.parse(raw);
-      if(sess && sess.email && (Date.now() - sess.ts) < 86400000) {
+      if (sess && sess.email && (Date.now() - sess.ts) < 86400000) {
+        // Validasi sesi terhadap akun yang ada di Firebase
         const acc = accounts.find(a => a.email.toLowerCase() === sess.email.toLowerCase());
-        // Hanya masuk via fallback jika Firebase tidak tersedia (tidak ada _firebaseUser)
-        const waitForFirebase = new Promise(resolve => setTimeout(resolve, 1200));
-        await waitForFirebase;
-        if(window._firebaseUser) return; // Firebase sudah handle
-        if(acc) {
+        if (acc) {
           kasirNama  = sess.nama || acc.nama;
           kasirEmail = sess.email;
-          document.getElementById('login-screen').style.display='none';
-          document.getElementById('app-kasir').style.display='grid';
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('app-kasir').style.display = 'grid';
           init();
           const lastView = sessionStorage.getItem('mantappos_lastview');
-          if(lastView && lastView !== 'kasir') {
+          if (lastView && lastView !== 'kasir') {
             const btn = document.querySelector(`.nav-btn[data-view="${lastView}"]`);
-            if(btn) showView(lastView, btn);
+            if (btn) showView(lastView, btn);
           }
+          return;
+        } else {
+          // Akun sesi tidak ditemukan di Firebase — paksa logout
+          sessionStorage.removeItem('mantappos_session');
+          toast('Sesi tidak valid, silakan login ulang.','error');
         }
       }
     } catch(e) { sessionStorage.removeItem('mantappos_session'); }
   }
-});
+}
 
 // ── INIT ──
 function init() {
@@ -2131,30 +1959,11 @@ function prosesTransaksi() {
     kembalian:mode==='tunai'?bayar-total:0
   };
   db.trx.unshift(trxObj);
-
-  // Update stok di memory + Firestore
-  cart.forEach(k=>{
-    const p=db.prods.find(x=>x.id===k.id);
-    if(p) {
-      p.stok-=k.qty;
-      saveDoc('prods', p.id, p); // simpan stok baru ke Firestore
-    }
-  });
-
-  // Simpan transaksi ke Firestore
-  saveDoc('trx', trxId, trxObj);
-
-  // Simpan hutang jika ada
+  cart.forEach(k=>{ const p=db.prods.find(x=>x.id===k.id); if(p) p.stok-=k.qty; });
   if(mode==='hutang') {
-    const hutObj={id:nextId('hutang','HUT'),pelId,tgl:nowDate(),total,bayar:0,nota:trxId,catatan:''};
-    db.hutang.unshift(hutObj);
-    saveDoc('hutang', hutObj.id, hutObj);
+    db.hutang.unshift({id:nextId('hutang','HUT'),pelId,tgl:nowDate(),total,bayar:0,nota:trxId,catatan:''});
   }
-
-  // Update counters
-  saveMeta('counters', db.counters);
-
-  saveDB(); // update localStorage cache
+  saveDB();
   renderProducts();
   showNota(trxObj);
   cart=[];
@@ -2317,20 +2126,11 @@ function saveProd() {
     stok:parseInt(document.getElementById('mf-stok').value)||0,min:parseInt(document.getElementById('mf-min').value)||5,
     hb:parseInt(document.getElementById('mf-hb').value)||0,hj:parseInt(document.getElementById('mf-hj').value)||0,
     barcode:document.getElementById('mf-barcode').value||''};
-  let prodId;
-  if(editProdId){
-    const i=db.prods.findIndex(p=>p.id===editProdId);
-    db.prods[i]={...db.prods[i],...obj};
-    prodId=editProdId;
-  } else {
-    prodId=nextId('prod','P');
-    db.prods.push({id:prodId,...obj});
-    saveMeta('counters', db.counters);
-  }
-  saveDoc('prods', prodId, db.prods.find(p=>p.id===prodId));
-  closeModal('modal-prod'); renderInventaris(); renderProducts(); toast('Produk disimpan!');
+  if(editProdId){const i=db.prods.findIndex(p=>p.id===editProdId);db.prods[i]={...db.prods[i],...obj};}
+  else db.prods.push({id:nextId('prod','P'),...obj});
+  saveDB(); closeModal('modal-prod'); renderInventaris(); renderProducts(); toast('Produk disimpan!');
 }
-function hapusProd(id){if(!confirm('Hapus produk ini?'))return;db.prods=db.prods.filter(p=>p.id!==id);deleteFireDoc('prods',id);renderInventaris();renderProducts();toast('Produk dihapus.');}
+function hapusProd(id){if(!confirm('Hapus produk ini?'))return;db.prods=db.prods.filter(p=>p.id!==id);saveDB();renderInventaris();renderProducts();toast('Produk dihapus.');}
 
 function openBarangMasukModal() {
   const sel=document.getElementById('bm-prod');
@@ -2350,11 +2150,7 @@ function saveBarangMasuk() {
   p.stok+=qty;
   const hbBaru=parseInt(document.getElementById('bm-hb').value)||0;
   if(hbBaru>0) p.hb=hbBaru;
-  const bmId=nextId('bm','BM');
-  const bmObj={id:bmId,prodId,tgl:document.getElementById('bm-tgl').value,qty,sat:p.sat,hb:hbBaru||p.hb,total:qty*(hbBaru||p.hb),supplier:document.getElementById('bm-supplier').value};
-  db.barangMasuk.unshift(bmObj);
-  saveDoc('prods', p.id, p);           // update stok produk di Firestore
-  saveMeta('counters', db.counters);
+  db.barangMasuk.unshift({id:nextId('bm','BM'),prodId,tgl:document.getElementById('bm-tgl').value,qty,sat:p.sat,hb:hbBaru||p.hb,total:qty*(hbBaru||p.hb),supplier:document.getElementById('bm-supplier').value});
   saveDB(); closeModal('modal-bm'); renderInventaris(); renderProducts();
   toast(`Stok ${p.nama} +${qty} berhasil dicatat!`);
 }
@@ -2441,12 +2237,10 @@ function openPelModal(mode,id) {
 }
 function savePel(){const nama=document.getElementById('pf-nama').value.trim();if(!nama){toast('Nama wajib diisi!','error');return;}
   const obj={nama,telp:document.getElementById('pf-telp').value,alamat:document.getElementById('pf-alamat').value,catatan:document.getElementById('pf-catatan').value,tgl:nowDate()};
-  let pelId;
-  if(editPelId){const i=db.pelanggan.findIndex(p=>p.id===editPelId);db.pelanggan[i]={...db.pelanggan[i],...obj};pelId=editPelId;}
-  else{pelId=nextId('pel','C');db.pelanggan.push({id:pelId,...obj});saveMeta('counters',db.counters);}
-  saveDoc('pelanggan',pelId,db.pelanggan.find(p=>p.id===pelId));
-  closeModal('modal-pel');renderPelanggan();populatePelSelect();toast('Pelanggan disimpan!');}
-function hapusPel(id){if(!confirm('Hapus pelanggan?'))return;db.pelanggan=db.pelanggan.filter(p=>p.id!==id);deleteFireDoc('pelanggan',id);renderPelanggan();toast('Pelanggan dihapus.');}
+  if(editPelId){const i=db.pelanggan.findIndex(p=>p.id===editPelId);db.pelanggan[i]={...db.pelanggan[i],...obj};}
+  else db.pelanggan.push({id:nextId('pel','C'),...obj});
+  saveDB();closeModal('modal-pel');renderPelanggan();populatePelSelect();toast('Pelanggan disimpan!');}
+function hapusPel(id){if(!confirm('Hapus pelanggan?'))return;db.pelanggan=db.pelanggan.filter(p=>p.id!==id);saveDB();renderPelanggan();toast('Pelanggan dihapus.');}
 
 function editTrx(id) {
   const t=db.trx.find(x=>x.id===id);
@@ -2537,7 +2331,7 @@ function saveEditTrx() {
   t.pelId=document.getElementById('etr-pel').value||'';
   t.mode=document.getElementById('etr-mode').value;
   t.kasir=document.getElementById('etr-kasir').value||t.kasir;
-  saveDoc('trx', t.id, t);
+  saveDB();
   closeModal('modal-edit-trx');
   renderRiwayat();
   toast(`Transaksi ${t.id} berhasil diupdate!`,'success');
@@ -2546,8 +2340,7 @@ function saveEditTrx() {
 function hapusTrx(id) {
   if(!confirm(`Hapus transaksi ${id}? Stok tidak akan dikembalikan otomatis.`)) return;
   db.trx=db.trx.filter(t=>t.id!==id);
-  deleteFireDoc('trx',id);
-  renderRiwayat(); toast('Transaksi dihapus.','info');
+  saveDB(); renderRiwayat(); toast('Transaksi dihapus.','info');
 }
 
 // ── PENGATURAN ──
@@ -2575,8 +2368,7 @@ function renderPengaturan() {
     </div>
     <div class="set-info-row"><span>Email</span><span class="set-info-val" style="color:var(--green)">${kasirEmail||'-'}</span></div>
     <div class="set-info-row"><span>Sesi Login</span><span class="set-info-val" style="color:var(--green)">Aktif</span></div>
-    <div class="set-info-row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:10px"><span>Versi App</span><span class="set-info-val">maNTapPos v5.0 Firebase</span></div>
-    <div class="set-info-row"><span>Status Cloud</span><span class="set-info-val" style="color:${_fs()&&_uid()?'var(--green)':'var(--amber)'}">${_fs()&&_uid()?'🟢 Terhubung ke Firebase':'🟡 Mode Offline (localStorage)'}</span></div>
+    <div class="set-info-row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:10px"><span>Versi App</span><span class="set-info-val">maNTapPos v2.0</span></div>
     <div class="set-info-row"><span>Total Produk</span><span class="set-info-val">${db.prods.length} SKU</span></div>
     <div class="set-info-row"><span>Total Transaksi</span><span class="set-info-val">${db.trx.length}</span></div>
     <div class="set-info-row"><span>Pelanggan</span><span class="set-info-val">${db.pelanggan.length}</span></div>
@@ -2590,7 +2382,7 @@ function savePengaturan() {
   db.setting.telp=document.getElementById('set-toko-telp').value.trim();
   db.setting.footer=document.getElementById('set-toko-footer').value.trim();
   db.setting.ppn=parseFloat(document.getElementById('set-ppn').value)||0;
-  saveMeta('setting', db.setting);
+  saveDB();
   toast('Pengaturan toko berhasil disimpan!','success');
 }
 
@@ -2609,10 +2401,10 @@ function gantiPassword() {
   if(pwBaru !== pwKonfirm) { errEl.textContent='Konfirmasi password tidak cocok.'; errEl.style.display='flex'; return; }
 
   acc.pw = pwBaru;
-  saveAccounts(accounts);
+  saveAccounts(accounts); // simpan ke Firebase
   closeModal('modal-ganti-pw');
   ['gp-lama','gp-baru','gp-konfirm'].forEach(id=>document.getElementById(id).value='');
-  toast('Password berhasil diubah!','success');
+  toast('Password berhasil diubah & disimpan ke Firebase!','success');
 }
 
 function backupJSON() {
@@ -2631,9 +2423,7 @@ function importJSON() {
         const imported=JSON.parse(ev.target.result);
         if(!imported.prods||!imported.setting) throw new Error('Format tidak valid');
         db=imported; saveDB(); renderPengaturan();
-        // Upload ke Firestore
-        if(_fs()&&_uid()) uploadDefaultDB().then(()=>toast('Data diimport & diunggah ke cloud!','success')).catch(()=>toast('Import lokal OK, cloud gagal.','error'));
-        else toast('Data berhasil diimport!','success');
+        toast('Data berhasil diimport!','success');
       } catch(err) { toast('File JSON tidak valid!','error'); }
     };
     fr.readAsText(e.target.files[0]);
@@ -2646,22 +2436,7 @@ function resetSemuaData() {
   if(!confirm('Konfirmasi sekali lagi: hapus semua transaksi, produk, dan pelanggan?')) return;
   db=JSON.parse(JSON.stringify(DEFAULT_DB));
   saveDB(); renderPengaturan();
-  // Upload ulang ke Firestore dengan data default
-  if(_fs()&&_uid()) uploadDefaultDB().catch(()=>{});
   toast('Data berhasil direset ke awal.','info');
-}
-
-// ── REFRESH DARI CLOUD ──
-async function refreshDariCloud() {
-  if(!_fs()||!_uid()) { toast('Firebase tidak tersedia. Pastikan sudah login & config diisi.','error'); return; }
-  if(!confirm('Muat ulang semua data dari Firebase Cloud? Data lokal akan diperbarui.')) return;
-  await loadDBFromFirebase();
-  renderProducts(); renderPelanggan(); populatePelSelect();
-  const activeView = sessionStorage.getItem('mantappos_lastview');
-  if(activeView==='riwayat') renderRiwayat();
-  if(activeView==='inventaris') renderInventaris();
-  if(activeView==='laporan') renderLaporan();
-  if(activeView==='pengaturan') renderPengaturan();
 }
 
 // ── EKSPOR ──
@@ -2881,24 +2656,6 @@ function importSyncCode() {
   }
 
   saveDB();
-
-  // Upload semua data hasil sinkron ke Firestore
-  if(_fs() && _uid()) {
-    (async () => {
-      const { writeBatch, doc } = window._firebase;
-      const batch = writeBatch(_fs());
-      const base = _storeId();
-      db.prods.forEach(p     => batch.set(doc(_fs(), base, 'prods',     p.id), p));
-      db.trx.forEach(t       => batch.set(doc(_fs(), base, 'trx',       t.id), t));
-      db.pelanggan.forEach(p => batch.set(doc(_fs(), base, 'pelanggan', p.id), p));
-      db.hutang.forEach(h    => batch.set(doc(_fs(), base, 'hutang',    h.id), h));
-      batch.set(doc(_fs(), base, 'meta', 'setting'),  db.setting);
-      batch.set(doc(_fs(), base, 'meta', 'counters'), db.counters);
-      try { await batch.commit(); toast('Data sinkron diunggah ke cloud ✓', 'success'); }
-      catch(e) { console.warn('Batch sync upload error', e); }
-    })();
-  }
-
   renderProducts(); renderRiwayat(); renderInventaris(); renderPelanggan();
 
   showSyncResult('ok', '✅ Sinkron berhasil!\n' + log.join(' · '));
@@ -2922,7 +2679,7 @@ function showSyncResult(type, msg) {
 }
 
 
-// ── MODAL CLOSE ON OVERLAY ──
+  // ── MODAL CLOSE ON OVERLAY ──
 document.querySelectorAll('.modal-overlay').forEach(el=>{el.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});});
 
 // ── BARCODE / KEYBOARD SHORTCUT ──
@@ -2944,6 +2701,14 @@ document.addEventListener('keydown',e=>{
     },100);
   }
 });
+</script>
+
+<!-- Firebase SDK — dimuat setelah semua script aplikasi -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+  // Setelah SDK selesai load, jalankan inisialisasi Firebase
+  initFirebase();
 </script>
 </body>
 </html>
