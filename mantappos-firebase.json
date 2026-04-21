@@ -1,4 +1,19 @@
 {
+  "mantappos_accounts": [
+    {
+      "id": "USR001",
+      "nama": "Admin",
+      "email": "admin@mantappos.com",
+      "pw": "1234",
+      "role": "owner",
+      "kode": "MANTAP2024",
+      "tgl": "2026-04-22",
+      "lastLogin": null
+    }
+  ]
+}
+
+{
   "setting": {
     "nama": "maNTapPos Toko Pertanian",
     "alamat": "Jl. Raya Pertanian No. 1",
